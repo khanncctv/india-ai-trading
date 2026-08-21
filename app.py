@@ -9,13 +9,26 @@ CAP=100000.0
 
 @st.cache_data(ttl=300)
 def get_data(symbol, period, interval):
-    try:
-        x=yf.download(symbol,period=period,interval=interval,auto_adjust=False,progress=False,threads=False)
-        if isinstance(x.columns,pd.MultiIndex): x=x.droplevel(-1,axis=1)
-        x.columns=[str(c) for c in x.columns]
-        need=['Open','High','Low','Close','Volume']
-        if all(c in x for c in need): return x[need].apply(pd.to_numeric,errors='coerce').dropna(),symbol
-    except Exception: pass
+    candidates=[symbol]
+    if symbol != '^NSEI': candidates += ['^NSEI']
+    candidates += ['NIFTYBEES.NS']
+    intervals=[interval] + ([] if interval=='1d' else ['1d'])
+    periods=[period] + ([] if period=='5y' else ['5y'])
+    for s in candidates:
+        for itv in intervals:
+            for per in periods:
+                try:
+                    x=yf.download(s,period=per,interval=itv,auto_adjust=False,progress=False,threads=False)
+                    if isinstance(x.columns,pd.MultiIndex):
+                        x=x.droplevel(-1,axis=1)
+                    x.columns=[str(c) for c in x.columns]
+                    need=['Open','High','Low','Close','Volume']
+                    if all(c in x.columns for c in need):
+                        x=x[need].apply(pd.to_numeric,errors='coerce').dropna()
+                        if len(x)>=250:
+                            return x,s
+                except Exception:
+                    continue
     return pd.DataFrame(),''
 
 def features(x):
@@ -71,7 +84,7 @@ st.warning('PAPER TRADING ONLY — no real-money orders or broker API.')
 st.caption('Fixed ML architecture • chronological training • locked OOS • cost/slippage stress • no parameter search on OOS')
 sym=st.sidebar.text_input('Symbol','^NSEI'); period=st.sidebar.selectbox('Period',['3y','5y'],1); interval=st.sidebar.selectbox('Interval',['1d','1h'],0); fee=st.sidebar.slider('Round-trip cost',0.,.004,.001,.0005); slip=st.sidebar.slider('Slippage',0.,.003,.0005,.0005)
 raw,src=get_data(sym,period,interval)
-if raw.empty: st.error('Market data unavailable. Try ^NSEI / 5y / 1d.'); st.stop()
+if raw.empty: st.error('Market data unavailable. The app tried the selected source and fallback sources/intervals. Try ^NSEI / 5y / 1d, then click Rerun.'); st.stop()
 df=features(raw); wf,oo=wfo(df)
 # Current signal is generated only from models trained on historical observations before the latest bar.
 train=df.iloc[:max(100,len(df)-1)]; latest=df.iloc[[-1]].copy(); prob,_=model_train_predict(train,latest); prob=float(prob[0])
