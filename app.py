@@ -1,110 +1,59 @@
+
 import os
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 import yfinance as yf
 
-st.set_page_config(page_title="India AI Trading Cloud", page_icon="🇮🇳", layout="wide")
-
-SYMBOL = os.getenv("SYMBOL", "^NSEI")
-CAPITAL = float(os.getenv("STARTING_CAPITAL", "100000"))
-QTY = int(os.getenv("TRADE_QTY", "1"))
-SL = float(os.getenv("STOP_LOSS_PCT", "0.005"))
-TP = float(os.getenv("TAKE_PROFIT_PCT", "0.01"))
+st.set_page_config(page_title="India AI Trading V2", page_icon="🇮🇳", layout="wide")
+SYMBOL=os.getenv("SYMBOL","^NSEI"); CAPITAL=float(os.getenv("STARTING_CAPITAL","100000"))
+QTY=int(os.getenv("TRADE_QTY","1")); SL=float(os.getenv("STOP_LOSS_PCT","0.005")); TP=float(os.getenv("TAKE_PROFIT_PCT","0.01"))
 
 @st.cache_data(ttl=300)
-def get_data(symbol, period, interval):
-    df = yf.download(symbol, period=period, interval=interval,
-                     auto_adjust=False, progress=False)
-    if df.empty:
-        return df
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df.columns = [str(c).title() for c in df.columns]
-    return df.dropna()
+def data(symbol,period,interval):
+    x=yf.download(symbol,period=period,interval=interval,auto_adjust=False,progress=False)
+    if isinstance(x.columns,pd.MultiIndex): x.columns=x.columns.get_level_values(0)
+    return x.dropna()
 
-def add_indicators(df):
-    x = df.copy()
-    x["EMA9"] = x["Close"].ewm(span=9, adjust=False).mean()
-    x["EMA21"] = x["Close"].ewm(span=21, adjust=False).mean()
-    delta = x["Close"].diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = (-delta.clip(upper=0)).rolling(14).mean()
-    rs = gain / loss.replace(0, pd.NA)
-    x["RSI"] = 100 - (100 / (1 + rs))
+def indicators(x):
+    x=x.copy(); x["EMA9"]=x.Close.ewm(span=9,adjust=False).mean(); x["EMA21"]=x.Close.ewm(span=21,adjust=False).mean()
+    d=x.Close.diff(); g=d.clip(lower=0).rolling(14).mean(); l=(-d.clip(upper=0)).rolling(14).mean()
+    x["RSI"]=100-(100/(1+g/l.replace(0,pd.NA)))
+    x["VWAP"]=(x.Close*x.Volume).cumsum()/x.Volume.cumsum()
+    x["VOL_MA20"]=x.Volume.rolling(20).mean()
     return x
 
-def run_backtest(df):
-    cash, position, entry = CAPITAL, 0, 0
-    trades = []
-    for ts, r in df.dropna().iterrows():
-        price = float(r["Close"])
-        if position == 0:
-            if r["EMA9"] > r["EMA21"] and 50 <= r["RSI"] <= 70:
-                cost = price * QTY
-                if cost <= cash:
-                    cash -= cost
-                    position, entry = QTY, price
-                    trades.append([ts, "BUY", price, QTY, 0, "EMA+RSI"])
-        else:
-            reason = None
-            if price <= entry * (1-SL): reason = "STOP LOSS"
-            elif price >= entry * (1+TP): reason = "TAKE PROFIT"
-            elif r["EMA9"] < r["EMA21"]: reason = "TREND EXIT"
+def backtest(x):
+    cash=CAPITAL; pos=0; entry=0; trades=[]; peak=CAPITAL; maxdd=0
+    for ts,r in x.dropna().iterrows():
+        px=float(r.Close)
+        if pos==0 and r.EMA9>r.EMA21 and 50<=r.RSI<=68 and px>r.VWAP and r.Volume>=r.VOL_MA20:
+            if px*QTY<=cash: cash-=px*QTY; pos=QTY; entry=px; trades.append([ts,"BUY",px,QTY,0,"EMA+RSI+VWAP+VOL"])
+        elif pos:
+            reason=None
+            if px<=entry*(1-SL): reason="STOP LOSS"
+            elif px>=entry*(1+TP): reason="TAKE PROFIT"
+            elif r.EMA9<r.EMA21 or px<r.VWAP: reason="TREND/VWAP EXIT"
             if reason:
-                cash += price * position
-                pnl = (price-entry)*position
-                trades.append([ts, "SELL", price, position, pnl, reason])
-                position = 0
-    if position:
-        price = float(df.iloc[-1]["Close"])
-        cash += price * position
-        trades.append([df.index[-1], "SELL", price, position, (price-entry)*position, "END"])
-    return cash, pd.DataFrame(trades, columns=["Time","Side","Price","Qty","PnL","Reason"])
+                cash+=px*pos; pnl=(px-entry)*pos; trades.append([ts,"SELL",px,pos,pnl,reason]); pos=0
+        equity=cash+(pos*px if pos else 0); peak=max(peak,equity); maxdd=max(maxdd,peak-equity)
+    if pos:
+        px=float(x.iloc[-1].Close); cash+=px*pos; trades.append([x.index[-1],"SELL",px,pos,(px-entry)*pos,"END"])
+    t=pd.DataFrame(trades,columns=["Time","Side","Price","Qty","PnL","Reason"])
+    sells=t[t.Side=="SELL"]; wins=(sells.PnL>0).sum(); losses=(sells.PnL<0).sum()
+    gross_profit=sells.loc[sells.PnL>0,"PnL"].sum(); gross_loss=-sells.loc[sells.PnL<0,"PnL"].sum()
+    ending=cash; return ending,t,(wins/max(len(sells),1))*100,maxdd,(gross_profit/gross_loss if gross_loss else float("inf"))
 
-st.title("🇮🇳 India AI Trading Agent")
-st.caption("Cloud paper-trading dashboard • No real-money orders")
-
-st.sidebar.header("Market")
-symbol = st.sidebar.text_input("Symbol", SYMBOL)
-period = st.sidebar.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y"], index=2)
-interval = st.sidebar.selectbox("Interval", ["1d", "1h"], index=0)
-
-if st.sidebar.button("Refresh data"):
-    st.cache_data.clear()
-    st.rerun()
-
-df = get_data(symbol, period, interval)
-if df.empty:
-    st.error("Market data could not be loaded. Try again later or choose another symbol.")
-    st.stop()
-
-df = add_indicators(df)
-last = df.iloc[-1]
-buy = bool(last["EMA9"] > last["EMA21"] and 50 <= last["RSI"] <= 70)
-
-c1,c2,c3,c4 = st.columns(4)
-c1.metric("Last Price", f"{float(last['Close']):,.2f}")
-c2.metric("RSI", f"{float(last['RSI']):.2f}")
-c3.metric("Signal", "BUY" if buy else "HOLD")
-c4.metric("Paper Capital", f"₹{CAPITAL:,.0f}")
-
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Close"))
-fig.add_trace(go.Scatter(x=df.index, y=df["EMA9"], name="EMA 9"))
-fig.add_trace(go.Scatter(x=df.index, y=df["EMA21"], name="EMA 21"))
-fig.update_layout(height=520, margin=dict(l=10,r=10,t=40,b=10))
-st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("Backtest")
-if st.button("Run Backtest", type="primary"):
-    ending, trades = run_backtest(df)
-    pnl = ending - CAPITAL
-    a,b,c = st.columns(3)
-    a.metric("Ending Value", f"₹{ending:,.2f}")
-    b.metric("P&L", f"₹{pnl:,.2f}")
-    c.metric("Trades", len(trades))
-    st.dataframe(trades, use_container_width=True)
-
-st.divider()
-st.info("Educational paper-trading MVP. Do not use these signals as investment advice. Real trading requires broker/exchange integration, authentication, risk controls and compliance.")
+st.title("🇮🇳 India AI Trading Agent — V2")
+st.warning("PAPER TRADING ONLY — no real-money orders.")
+symbol=st.sidebar.text_input("Symbol",SYMBOL); period=st.sidebar.selectbox("Period",["3mo","6mo","1y","2y"],2)
+if st.sidebar.button("Refresh"): st.cache_data.clear(); st.rerun()
+df=indicators(data(symbol,period,"1d"))
+last=df.iloc[-1]; buy=last.EMA9>last.EMA21 and 50<=last.RSI<=68 and last.Close>last.VWAP and last.Volume>=last.VOL_MA20
+a,b,c,d=st.columns(4); a.metric("Last Price",f"{last.Close:,.2f}"); b.metric("RSI",f"{last.RSI:.1f}"); c.metric("V2 Signal","BUY" if buy else "HOLD"); d.metric("Capital",f"₹{CAPITAL:,.0f}")
+fig=go.Figure(); fig.add_trace(go.Scatter(x=df.index,y=df.Close,name="Close")); fig.add_trace(go.Scatter(x=df.index,y=df.EMA9,name="EMA9")); fig.add_trace(go.Scatter(x=df.index,y=df.EMA21,name="EMA21")); fig.add_trace(go.Scatter(x=df.index,y=df.VWAP,name="VWAP")); st.plotly_chart(fig,use_container_width=True)
+if st.button("Run V2 Backtest",type="primary"):
+    end,t,win,dd,pf=backtest(df); pnl=end-CAPITAL
+    a,b,c,d,e=st.columns(5); a.metric("Ending Value",f"₹{end:,.2f}"); b.metric("P&L",f"₹{pnl:,.2f}"); c.metric("Trades",len(t)); d.metric("Win Rate",f"{win:.1f}%"); e.metric("Max Drawdown",f"₹{dd:,.2f}")
+    st.metric("Profit Factor", "∞" if pf==float("inf") else f"{pf:.2f}")
+    st.dataframe(t,use_container_width=True)
