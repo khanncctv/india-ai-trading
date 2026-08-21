@@ -1,2 +1,2 @@
-# India AI Trading V6 Final Robust
-Paper trading only. Includes in-sample/out-of-sample split, fees, slippage, risk rules, equity curve and trade history.
+# India AI Trading V7 Walk-Forward Robust
+Paper trading only. Multiple sequential validation windows, fees, slippage, ATR risk, 2R target and 3-loss halt.
