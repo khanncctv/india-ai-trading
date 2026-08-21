@@ -1,2 +1,2 @@
-# India AI Trading Agent V3
-Paper-trading only. V3 uses trend, RSI, VWAP, volume, ATR stop and 2R target with loss-streak guard.
+# India AI Trading All-in-One
+Paper trading dashboard combining trend, RSI, VWAP, volume, ATR risk, 2R target, loss-streak halt, estimated costs/slippage and performance metrics.
