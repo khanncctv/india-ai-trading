@@ -1,2 +1,2 @@
-# India AI Trading Agent V2
-Cloud paper-trading dashboard with EMA, RSI, VWAP, volume confirmation, stop-loss, take-profit, win rate, drawdown and profit factor.
+# India AI Trading Agent V3
+Paper-trading only. V3 uses trend, RSI, VWAP, volume, ATR stop and 2R target with loss-streak guard.
