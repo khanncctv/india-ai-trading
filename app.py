@@ -4,10 +4,11 @@ CAP=float(os.getenv("STARTING_CAPITAL","100000")); QTY=int(os.getenv("TRADE_QTY"
 @st.cache_data(ttl=300)
 def load_data(symbol,period,interval):
     x=yf.download(symbol,period=period,interval=interval,auto_adjust=False,progress=False)
-    if isinstance(x.columns,pd.MultiIndex): x=x.xs(symbol,axis=1,level=1,drop_level=True) if symbol in x.columns.get_level_values(1) else x.droplevel(1,axis=1)
+    if isinstance(x.columns,pd.MultiIndex):
+        x=x.xs(symbol,axis=1,level=1,drop_level=True) if symbol in x.columns.get_level_values(1) else x.droplevel(1,axis=1)
     x.columns=[str(c) for c in x.columns]
     for c in ["Open","High","Low","Close","Volume"]:
-        if c in x: x[c]=pd.to_numeric(x[c],errors="coerce")
+        if c in x.columns: x[c]=pd.to_numeric(x[c],errors="coerce")
     return x.dropna()
 def ind(x):
     x=x.copy(); x["EMA20"]=x.Close.ewm(span=20,adjust=False).mean(); x["EMA50"]=x.Close.ewm(span=50,adjust=False).mean()
@@ -17,7 +18,7 @@ def ind(x):
 def bt(x):
     cash=CAP; pos=0; entry=stop=target=0; trades=[]; peak=CAP; dd=0; streak=0; halted=False
     for ts,r in x.dropna().iterrows():
-        p=float(r.Close); peak=max(peak,cash+pos*p); dd=max(dd,peak-(cash+pos*p))
+        p=float(r.Close); eq=cash+pos*p; peak=max(peak,eq); dd=max(dd,peak-eq)
         if pos:
             reason="ATR STOP" if p<=stop else "2R TARGET" if p>=target else "TREND/VWAP EXIT" if r.EMA20<r.EMA50 or p<r.VWAP else None
             if reason:
@@ -37,7 +38,10 @@ raw=load_data(sym,period,interval)
 if raw.empty or not {"High","Low","Close","Volume"}.issubset(raw.columns): st.error("Market data unavailable. Try ^NSEI with 1d."); st.stop()
 df=ind(raw); r=df.iloc[-1]; sig=bool(r.EMA20>r.EMA50 and 52<=r.RSI<=65 and r.Close>r.VWAP and r.Volume>=r.VOLMA)
 a,b,c,d,e=st.columns(5); a.metric("Last",f"{float(r.Close):,.2f}"); b.metric("RSI",f"{float(r.RSI):.1f}"); c.metric("Signal","BUY" if sig else "HOLD"); d.metric("ATR",f"{float(r.ATR):.2f}"); e.metric("Capital",f"₹{CAP:,.0f}")
-fig=go.Figure(); [fig.add_trace(go.Scatter(x=df.index,y=df[k],name=k)) for k in ["Close","EMA20","EMA50","VWAP"]]; st.plotly_chart(fig,use_container_width=True)
+fig=go.Figure()
+for k in ["Close","EMA20","EMA50","VWAP"]:
+    fig.add_trace(go.Scatter(x=df.index.to_numpy(), y=df[k].to_numpy(dtype=float), name=k, mode="lines"))
+st.plotly_chart(fig,use_container_width=True)
 if st.button("🚀 RUN ALL-IN-ONE BACKTEST",type="primary"):
     end,t,w,dd,pf,halt=bt(df); a,b,c,d,e=st.columns(5); a.metric("Ending Value",f"₹{end:,.2f}"); b.metric("P&L",f"₹{end-CAP:,.2f}"); c.metric("Trades",len(t)); d.metric("Win Rate",f"{w:.1f}%"); e.metric("Max Drawdown",f"₹{dd:,.2f}"); st.metric("Profit Factor","∞" if np.isinf(pf) else f"{pf:.2f}"); st.dataframe(t,use_container_width=True)
 st.info("Paper trading only. Backtests do not guarantee future performance.")
